@@ -152,7 +152,10 @@ try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}ca
 const CELL=4,cellKey=(la,ln)=>Math.floor(la*111320/CELL)+','+Math.floor(ln*111320*Math.cos(la*Math.PI/180)/CELL);
 const used=new Set(store.prints.map(p=>cellKey(p[0],p[1])));
 let saveT=0;
-const save=()=>{clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){msg('保存できませんでした（容量不足かも）')}},800)};
+const flush=()=>{clearTimeout(saveT);saveT=0;try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){msg('保存できませんでした（容量不足かも）')}};
+const save=()=>{if(!saveT)saveT=setTimeout(flush,1500)};   // 歩いている間も最大1.5秒ごとに必ず保存
+addEventListener('pagehide',flush);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flush()});
 
 /* ---------- 地図 ---------- */
 const start = store.prints.length ? [store.prints.at(-1)[0],store.prints.at(-1)[1]] : [35.6812,139.7671];
@@ -227,10 +230,10 @@ const OVERPASS=['https://overpass-api.de/api/interpreter','https://maps.mail.ru/
 const ROADS='^(primary|secondary|tertiary|unclassified|residential|living_street|pedestrian)(_link)?$';
 const NEAR=10;                       // 道からこの距離(m)以内に足跡があれば「踏んだ」
 async function overpass(q){             // 複数サーバーに同時に聞いて、一番早い正しい返事を使う
-  const ctl=new AbortController();
+  const ctl=new AbortController(),kill=setTimeout(()=>ctl.abort(),90000);
   const one=u=>fetch(u,{method:'POST',body:'data='+encodeURIComponent(q),signal:ctl.signal}).then(async r=>{
     if(!r.ok)throw new Error(r.status);const j=await r.json();if(!j||!Array.isArray(j.elements))throw new Error('bad');return j});
-  try{const j=await Promise.any(OVERPASS.map(one));ctl.abort();return j}catch(e){throw e}
+  try{const j=await Promise.any(OVERPASS.map(one));ctl.abort();return j}finally{clearTimeout(kill)}
 }
 const geoKey=id=>'ashiato-geo-'+id;
 const geoMem={};
@@ -300,10 +303,12 @@ function coverage(geo){
   }
   return {pct:hit/geo.samples.length*100,animal:votes.indexOf(Math.max(...votes))};
 }
-let curTown=null,lastLookup=0,lastCov=0,looking=false;
+let curTown=null,lastLookup=0,lastCov=0,looking=false,fails=0,townNote='';
 function showTown(){
   const t=curTown&&store.towns[curTown];
-  if(!t){$('town').classList.remove('show');return}
+  if(!t){
+    if(!townNote){$('town').classList.remove('show');return}
+    $('town').classList.add('show');$('tname').textContent=townNote;$('tpct').textContent='';$('tbar').style.width='0';return}
   $('town').classList.add('show');$('tname').textContent=t.name+(t.flag!=null?'（制覇）':'');
   $('tpct').textContent='道の'+Math.floor(t.pct)+'%';$('tbar').style.width=Math.min(100,t.pct)+'%';
 }
@@ -320,9 +325,13 @@ function updateCoverage(force){
 async function townTick(p){
   if(curTown){const g=loadGeo(curTown);if(g&&inRings(g.rings,p[0],p[1])){updateCoverage();return}}
   for(const id in store.towns){const g=loadGeo(id);if(g&&inRings(g.rings,p[0],p[1])){curTown=id;updateCoverage(true);return}}
-  const now=Date.now();if(looking||now-lastLookup<30000)return;lastLookup=now;looking=true;
-  try{const id=await fetchTown(p[0],p[1]);curTown=id;if(id)updateCoverage(true);else showTown()}
-  catch(e){}finally{looking=false}
+  curTown=null;
+  const now=Date.now(),wait=Math.min(300000,20000*2**fails);
+  if(looking||now-lastLookup<wait){showTown();return}
+  lastLookup=now;looking=true;townNote='町のデータを読み込み中…';showTown();
+  try{const id=await fetchTown(p[0],p[1]);fails=0;curTown=id;townNote=id?'':'この場所は町の境界データがありません';if(id)updateCoverage(true);else showTown()}
+  catch(e){fails++;townNote='町のデータを取得できません（自動で再試行）';showTown()}
+  finally{looking=false}
 }
 
 const me=L.marker(start,{icon:L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[18,18]}),interactive:false});
@@ -397,13 +406,21 @@ function demo(){
   last=null;carry=0;rec=true;
   let c=map.getCenter(),p=[c.lat,c.lng],h=Math.random()*360,t=Date.now();
   $('demo').classList.add('on');setGo(true);
+  let tgt=null;const done=new Set();
   demoT=setInterval(()=>{
-    h+=(Math.random()-.5)*50;t+=1000;
-    const d=6/R*180/Math.PI;
-    p=[p[0]+d*Math.cos(rad(h)),p[1]+d*Math.sin(rad(h))/Math.cos(rad(p[0]))];
+    t+=1000;const step=6,geo=curTown&&loadGeo(curTown);
+    if(geo){                                  // 町のデータがあれば、まだ踏んでいない道へ向かって歩く
+      if(!tgt||hav(p,tgt)<3){
+        if(tgt)geo.samples.forEach((s,i)=>{if(hav(s,tgt)<9)done.add(i)});
+        let bi=-1,bd=1e9;geo.samples.forEach((s,i)=>{if(done.has(i))return;const dd=hav(p,s);if(dd<bd){bd=dd;bi=i}});
+        tgt=bi>=0?geo.samples[bi]:null;
+      }
+    }else tgt=null;
+    if(tgt){const dd=hav(p,tgt),f=Math.min(1,step/dd);p=[p[0]+(tgt[0]-p[0])*f,p[1]+(tgt[1]-p[1])*f]}
+    else{h+=(Math.random()-.5)*50;const d=step/R*180/Math.PI;p=[p[0]+d*Math.cos(rad(h)),p[1]+d*Math.sin(rad(h))/Math.cos(rad(p[0]))]}
     addPoint(p[0],p[1],5,t);
   },350);
-  msg('デモ：ランダムに歩いています');
+  msg('デモ：町のデータがあれば道に沿って歩きます');
 }
 
 /* ---------- UI ---------- */
