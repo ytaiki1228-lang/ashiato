@@ -10,6 +10,7 @@
 <link rel="apple-touch-icon" href="icon.svg">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@6.18.0/dist/maplibre-gl.css">
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#f6efe2;--ink:#2b2118;--card:#fffaf1;--line:#e6dac4;--acc:#8a5a2b}
@@ -88,6 +89,8 @@ button:focus-visible{outline:3px solid #2d7ff9;outline-offset:2px}
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/maplibre-gl@6.18.0/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"></script>
 <script>
 {
 /* ---------- 動物の足跡の形（単位座標：前方が -y、だいたい -1〜1） ---------- */
@@ -138,9 +141,11 @@ const save=()=>{clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setIt
 /* ---------- 地図 ---------- */
 const start = store.prints.length ? [store.prints.at(-1)[0],store.prints.at(-1)[1]] : [35.6812,139.7671];
 const map=L.map('map',{zoomControl:false,zoomAnimation:false,attributionControl:true}).setView(start,17);
-// 文字なし地図（道・川・緑地）＋ 地形の陰影
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png',{maxZoom:20,subdomains:'abcd',
-  attribution:'&copy; OpenStreetMap contributors &copy; CARTO'}).addTo(map);
+// 文字なし地図（OpenFreeMap のベクター地図から文字・記号レイヤーを外す）＋ 地形の陰影
+const base=L.maplibreGL({style:'https://tiles.openfreemap.org/styles/liberty',
+  attribution:'<a href="https://openfreemap.org">OpenFreeMap</a> &copy; OpenStreetMap contributors'}).addTo(map);
+{const gl=base.getMaplibreMap();const strip=()=>{for(const l of gl.getStyle().layers)if(l.type==='symbol')gl.removeLayer(l.id)};
+ gl.on('style.load',strip);if(gl.isStyleLoaded())strip();}
 L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png',{maxNativeZoom:16,maxZoom:20,opacity:.22,
   attribution:'地理院タイル'}).addTo(map);
 
