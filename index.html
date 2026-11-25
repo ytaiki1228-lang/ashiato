@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f6efe2">
+<title>あしあとマップ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f6efe2;--ink:#2b2118;--card:#fffaf1;--line:#e6dac4;--acc:#8a5a2b}
+*{box-sizing:border-box;min-width:0;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.5 "Zen Maru Gothic",system-ui,sans-serif;overflow:hidden}
+#map{position:fixed;inset:0;background:#e9e3d6}
+.leaflet-control-attribution{font-size:10px}
+.top{position:fixed;z-index:500;top:calc(env(safe-area-inset-top) + 10px);left:10px;right:10px;display:flex;gap:8px;align-items:center;pointer-events:none}
+.brand,.stats{pointer-events:auto;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:8px 14px;box-shadow:0 4px 14px rgba(60,40,20,.12)}
+.brand{font-weight:900;font-size:18px;display:flex;align-items:center;gap:6px}
+.brand canvas{width:22px;height:22px}
+.stats{margin-left:auto;display:flex;gap:14px;font-size:13px;white-space:nowrap}
+.stats b{font-size:17px;font-variant-numeric:tabular-nums}
+.side{position:fixed;z-index:500;right:10px;bottom:calc(env(safe-area-inset-bottom) + 214px);display:flex;flex-direction:column;gap:8px}
+.side button{width:46px;height:46px;border-radius:14px;border:1px solid var(--line);background:var(--card);font:inherit;font-size:11px;font-weight:700;color:var(--ink);box-shadow:0 4px 14px rgba(60,40,20,.12)}
+.side button.on{background:var(--ink);color:#fff}
+.sheet{position:fixed;z-index:600;left:0;right:0;bottom:0;background:var(--card);border-radius:22px 22px 0 0;box-shadow:0 -6px 24px rgba(60,40,20,.15);padding:12px 14px calc(env(safe-area-inset-bottom) + 14px)}
+.label{font-size:13px;font-weight:700;opacity:.7;margin:0 4px 6px}
+.animals{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;padding:2px 2px 8px;scrollbar-width:none}
+.animals::-webkit-scrollbar{display:none}
+.an{flex:none;scroll-snap-align:start;width:72px;padding:6px 0 4px;border-radius:16px;border:2px solid var(--line);background:#fff;font:inherit;font-size:13px;font-weight:700;color:var(--ink);display:flex;flex-direction:column;align-items:center;gap:2px}
+.an canvas{width:38px;height:38px}
+.an[aria-pressed=true]{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,#fff)}
+.row{display:flex;gap:8px;margin-top:6px}
+.go{flex:1;height:56px;border:0;border-radius:18px;background:var(--acc);color:#fff;font:inherit;font-size:19px;font-weight:900;letter-spacing:.04em;box-shadow:0 6px 16px color-mix(in srgb,var(--acc) 40%,transparent)}
+.go.rec{background:#fff;color:var(--acc);border:3px solid var(--acc)}
+.go.rec::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;background:#e33;margin-right:8px;vertical-align:2px;animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.2}}
+@media(prefers-reduced-motion:reduce){.go.rec::before{animation:none}}
+.sub{width:56px;height:56px;border-radius:18px;border:1px solid var(--line);background:#fff;font:inherit;font-size:12px;font-weight:700;color:var(--ink)}
+.msg{font-size:12px;opacity:.75;margin:8px 4px 0;min-height:18px}
+.modal{position:fixed;inset:0;z-index:900;background:rgba(30,20,10,.45);display:none;align-items:center;justify-content:center;padding:20px}
+.modal.show{display:flex}
+.box{background:var(--card);border-radius:20px;padding:20px;max-width:340px;width:100%}
+.box h2{margin:0 0 6px;font-size:19px}
+.box p{margin:0 0 16px;font-size:14px}
+.box .row button{flex:1;height:48px;border-radius:14px;font:inherit;font-weight:700;border:1px solid var(--line);background:#fff;color:var(--ink)}
+.box .row .danger{background:#c63b2b;color:#fff;border:0}
+.me{width:18px;height:18px;border-radius:50%;background:#2d7ff9;border:3px solid #fff;box-shadow:0 0 0 2px rgba(45,127,249,.35),0 2px 6px rgba(0,0,0,.3)}
+button:focus-visible{outline:3px solid #2d7ff9;outline-offset:2px}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="top">
+  <div class="brand"><canvas id="logo" width="44" height="44"></canvas>あしあと</div>
+  <div class="stats">
+    <span><b id="dist">0.00</b> km</span>
+    <span><b id="count">0</b> 歩</span>
+  </div>
+</div>
+
+<div class="side">
+  <button id="follow" class="on" aria-label="現在地を追う">追従</button>
+  <button id="fit" aria-label="全部の足跡を表示">全体</button>
+  <button id="demo" aria-label="デモ歩行">デモ</button>
+</div>
+
+<div class="sheet">
+  <div class="label">どの動物で歩く？</div>
+  <div class="animals" id="animals"></div>
+  <div class="row">
+    <button class="go" id="go">歩きはじめる</button>
+    <button class="sub" id="clear">消す</button>
+  </div>
+  <div class="msg" id="msg">位置情報をオンにして「歩きはじめる」を押してね</div>
+</div>
+
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
+  <div class="box">
+    <h2 id="mt">足跡をぜんぶ消す？</h2>
+    <p>これまで歩いた足跡がすべて消えます。元に戻せません。</p>
+    <div class="row"><button id="no">やめる</button><button id="yes" class="danger">消す</button></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+{
+/* ---------- 動物の足跡の形（単位座標：前方が -y、だいたい -1〜1） ---------- */
+const E = (x,y,rx,ry,r=0)=>{const p=new Path2D();p.ellipse(x,y,rx,ry,r,0,Math.PI*2);return p};
+const join = list=>{const p=new Path2D();list.forEach(q=>p.addPath(q));return p};
+const toes = (pts,rx,ry)=>pts.map(([x,y,r])=>E(x,y,rx,ry,r||0));
+
+const ANIMALS = [
+  {id:'dog',name:'イヌ',color:'#8a5a2b',stride:4,
+    fill:join([E(0,.38,.42,.34),...toes([[-.52,-.12,-.35],[-.19,-.48,-.1],[.19,-.48,.1],[.52,-.12,.35]],.16,.22),
+      ...toes([[-.62,-.38,-.4],[-.24,-.78,-.1],[.24,-.78,.1],[.62,-.38,.4]],.05,.09)])},
+  {id:'cat',name:'ネコ',color:'#e0508a',stride:3.2,
+    fill:join([E(0,.42,.36,.26),E(-.26,.3,.2,.22),E(.26,.3,.2,.22),
+      ...toes([[-.5,-.1],[-.18,-.42],[.2,-.44],[.52,-.12]],.15,.17)])},
+  {id:'bear',name:'クマ',color:'#3d2a1f',stride:5,
+    fill:join([E(0,.32,.6,.44),E(0,.66,.4,.2),...toes([[-.66,-.18,-.5],[-.34,-.44,-.25],[0,-.54],[.34,-.44,.25],[.66,-.18,.5]],.13,.16),
+      ...toes([[-.8,-.42,-.55],[-.42,-.74,-.25],[0,-.86],[.42,-.74,.25],[.8,-.42,.55]],.045,.11)])},
+  {id:'bird',name:'トリ',color:'#e08a00',stride:2.4,
+    stroke:(()=>{const p=new Path2D();p.moveTo(0,.3);p.lineTo(0,-.85);p.moveTo(0,.3);p.lineTo(-.6,-.5);p.moveTo(0,.3);p.lineTo(.6,-.5);p.moveTo(0,.3);p.lineTo(0,.85);return p})()},
+  {id:'rabbit',name:'ウサギ',color:'#7a62e8',stride:4.5,
+    fill:join([E(0,.12,.27,.72),...toes([[-.2,-.72],[-.07,-.84],[.07,-.84],[.2,-.72]],.07,.1)])},
+  {id:'elephant',name:'ゾウ',color:'#5f7488',stride:6,
+    fill:join([E(0,.05,.78,.82),...toes([[-.52,-.72,-.5],[-.18,-.86,-.15],[.18,-.86,.15],[.52,-.72,.5]],.15,.11)])},
+  {id:'duck',name:'アヒル',color:'#f2b600',stride:2.6,
+    fill:(()=>{const p=new Path2D();p.moveTo(0,.75);p.quadraticCurveTo(-.15,.1,-.68,-.55);p.quadraticCurveTo(-.34,-.4,-.3,-.62);p.quadraticCurveTo(-.15,-.3,0,-.85);p.quadraticCurveTo(.15,-.3,.3,-.62);p.quadraticCurveTo(.34,-.4,.68,-.55);p.quadraticCurveTo(.15,.1,0,.75);p.closePath();return p})()},
+];
+
+function drawPrint(ctx,a,x,y,size,rot){
+  ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.scale(size/2,size/2);
+  ctx.lineJoin='round';ctx.lineCap='round';
+  if(a.stroke){
+    ctx.strokeStyle='rgba(255,255,255,.9)';ctx.lineWidth=.34;ctx.stroke(a.stroke);
+    ctx.strokeStyle=a.color;ctx.lineWidth=.17;ctx.stroke(a.stroke);
+  }else{
+    ctx.strokeStyle='rgba(255,255,255,.9)';ctx.lineWidth=.14;ctx.stroke(a.fill);
+    ctx.fillStyle=a.color;ctx.fill(a.fill);
+  }
+  ctx.restore();
+}
+
+/* ---------- 保存 ---------- */
+const KEY='ashiato-v1';
+let store={prints:[],dist:0,animal:0};
+try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.prints))store=Object.assign(store,s)}catch(e){}
+let saveT=0;
+const save=()=>{clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){msg('保存できませんでした（容量不足かも）')}},800)};
+
+/* ---------- 地図 ---------- */
+const start = store.prints.length ? [store.prints.at(-1)[0],store.prints.at(-1)[1]] : [35.6812,139.7671];
+const map=L.map('map',{zoomControl:false,zoomAnimation:false,attributionControl:true}).setView(start,17);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc',
+  attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+
+const PrintLayer=L.Layer.extend({
+  onAdd(m){this.c=L.DomUtil.create('canvas','');this.c.style.pointerEvents='none';
+    m.getPanes().overlayPane.appendChild(this.c);m.on('moveend zoomend resize viewreset move',this.draw,this);this.draw()},
+  onRemove(m){this.c.remove();m.off('moveend zoomend resize viewreset move',this.draw,this)},
+  draw(){
+    const m=this._map,c=this.c,sz=m.getSize(),dpr=devicePixelRatio||1;
+    L.DomUtil.setPosition(c,m.containerPointToLayerPoint([0,0]));
+    c.width=sz.x*dpr;c.height=sz.y*dpr;c.style.width=sz.x+'px';c.style.height=sz.y+'px';
+    const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
+    const lat=m.getCenter().lat,mpp=40075016.686*Math.cos(lat*Math.PI/180)/2**(m.getZoom()+8);
+    let lx=-1e9,ly=-1e9;
+    for(const p of store.prints){
+      const a=ANIMALS[p[3]]||ANIMALS[0];
+      const size=Math.max(20,a.stride*.9/mpp);
+      const pt=m.latLngToContainerPoint([p[0],p[1]]);
+      if(pt.x<-40||pt.y<-40||pt.x>sz.x+40||pt.y>sz.y+40)continue;
+      const r=p[2]*Math.PI/180,off=p[4]*size*.42;
+      const x=pt.x+Math.cos(r)*off,y=pt.y+Math.sin(r)*off;
+      if(Math.hypot(x-lx,y-ly)<size*1.05)continue;
+      lx=x;ly=y;drawPrint(ctx,a,x,y,size,r);
+    }
+  }
+});
+const prints=new PrintLayer().addTo(map);
+const me=L.marker(start,{icon:L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[18,18]}),interactive:false});
+const acc=L.circle(start,{radius:10,color:'#2d7ff9',weight:1,fillOpacity:.08,interactive:false});
+
+/* ---------- 足跡を置く ---------- */
+const R=6371000,rad=d=>d*Math.PI/180;
+const hav=(a,b)=>{const dl=rad(b[0]-a[0]),dn=rad(b[1]-a[1]);const h=Math.sin(dl/2)**2+Math.cos(rad(a[0]))*Math.cos(rad(b[0]))*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(h))};
+const bearing=(a,b)=>{const y=Math.sin(rad(b[1]-a[1]))*Math.cos(rad(b[0])),x=Math.cos(rad(a[0]))*Math.sin(rad(b[0]))-Math.sin(rad(a[0]))*Math.cos(rad(b[0]))*Math.cos(rad(b[1]-a[1]));return(Math.atan2(y,x)*180/Math.PI+360)%360};
+let last=null,lastT=0,carry=0,side=1;
+
+function addPoint(lat,lng,accuracy,t){
+  const p=[lat,lng];
+  me.setLatLng(p);acc.setLatLng(p).setRadius(accuracy||5);
+  if(follow)map.panTo(p,{animate:false});
+  if(accuracy>35){msg(`GPSの精度待ち…（±${Math.round(accuracy)}m）`);return}
+  if(!last){last=p;lastT=t;msg('記録中：歩くと足跡がつくよ');return}
+  const d=hav(last,p),dt=(t-lastT)/1000;
+  if(d<1.5)return;
+  if(dt>0&&d/dt>12){last=p;lastT=t;return}            // 乗り物・GPS飛び
+  const a=ANIMALS[store.animal],h=bearing(last,p);
+  let s=a.stride-carry;
+  while(s<=d){
+    const f=s/d;
+    store.prints.push([+(last[0]+(p[0]-last[0])*f).toFixed(6),+(last[1]+(p[1]-last[1])*f).toFixed(6),Math.round(h),store.animal,side]);
+    side=-side;s+=a.stride;
+  }
+  carry=a.stride-(s-d);
+  store.dist+=d;last=p;lastT=t;
+  stats();prints.draw();save();
+}
+
+/* ---------- GPS / デモ ---------- */
+let watch=null,demoT=null,follow=true,lock=null;
+async function wake(){try{if('wakeLock' in navigator)lock=await navigator.wakeLock.request('screen')}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&(watch!==null||demoT))wake()});
+
+function begin(){
+  if(!('geolocation' in navigator)){msg('この端末は位置情報が使えません。「デモ」で試せます');return}
+  if(!isSecureContext){msg('位置情報は https のページでしか使えません');return}
+  last=null;carry=0;
+  me.addTo(map);acc.addTo(map);
+  watch=navigator.geolocation.watchPosition(
+    g=>addPoint(g.coords.latitude,g.coords.longitude,g.coords.accuracy,g.timestamp),
+    e=>{msg(e.code===1?'位置情報が許可されていません。設定から許可してね':'位置が取れません…（屋内かも）');if(e.code===1)end()},
+    {enableHighAccuracy:true,maximumAge:2000,timeout:20000});
+  wake();setGo(true);msg('現在地をさがしています…');
+}
+function end(){
+  if(watch!==null)navigator.geolocation.clearWatch(watch);watch=null;
+  clearInterval(demoT);demoT=null;$('demo').classList.remove('on');
+  try{lock&&lock.release()}catch(e){}lock=null;
+  setGo(false);msg('おつかれさま！足跡は保存されています');
+}
+function demo(){
+  if(watch!==null||demoT){end();return}
+  last=null;carry=0;me.addTo(map);acc.addTo(map);
+  let c=map.getCenter(),p=[c.lat,c.lng],h=Math.random()*360,t=Date.now();
+  $('demo').classList.add('on');setGo(true);
+  demoT=setInterval(()=>{
+    h+=(Math.random()-.5)*50;t+=1000;
+    const d=6/R*180/Math.PI;
+    p=[p[0]+d*Math.cos(rad(h)),p[1]+d*Math.sin(rad(h))/Math.cos(rad(p[0]))];
+    addPoint(p[0],p[1],5,t);
+  },350);
+  msg('デモ：ランダムに歩いています');
+}
+
+/* ---------- UI ---------- */
+const $=id=>document.getElementById(id);
+const msg=t=>$('msg').textContent=t;
+const stats=()=>{$('dist').textContent=(store.dist/1000).toFixed(2);$('count').textContent=store.prints.length.toLocaleString()};
+const setGo=on=>{const b=$('go');b.classList.toggle('rec',on);b.textContent=on?'記録中（タップで終了）':'歩きはじめる'};
+
+function thumb(cv,a){const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);drawPrint(ctx,a,cv.width/2,cv.height/2,cv.width*.78,0)}
+function pick(i){
+  store.animal=i;save();
+  document.documentElement.style.setProperty('--acc',ANIMALS[i].color);
+  document.querySelectorAll('.an').forEach((b,j)=>b.setAttribute('aria-pressed',j===i));
+  thumb($('logo'),ANIMALS[i]);
+}
+$('animals').innerHTML=ANIMALS.map((a,i)=>`<button class="an" data-i="${i}" aria-pressed="false"><canvas width="76" height="76"></canvas>${a.name}</button>`).join('');
+document.querySelectorAll('.an').forEach((b,i)=>{thumb(b.querySelector('canvas'),ANIMALS[i]);b.onclick=()=>pick(i)});
+pick(Math.min(store.animal||0,ANIMALS.length-1));
+
+$('go').onclick=()=>(watch!==null||demoT)?end():begin();
+$('demo').onclick=demo;
+$('follow').onclick=()=>{follow=!follow;$('follow').classList.toggle('on',follow);if(follow&&last)map.panTo(last)};
+map.on('dragstart',()=>{follow=false;$('follow').classList.remove('on')});
+$('fit').onclick=()=>{if(!store.prints.length){msg('まだ足跡がありません');return}
+  map.fitBounds(L.latLngBounds(store.prints.map(p=>[p[0],p[1]])),{padding:[40,40],maxZoom:18});follow=false;$('follow').classList.remove('on')};
+$('clear').onclick=()=>$('modal').classList.add('show');
+$('no').onclick=()=>$('modal').classList.remove('show');
+$('yes').onclick=()=>{store.prints=[];store.dist=0;last=null;carry=0;save();stats();prints.draw();$('modal').classList.remove('show');msg('足跡を消しました')};
+
+stats();
+if('serviceWorker' in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
+</script>
+</body>
+</html>
