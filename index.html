@@ -76,7 +76,7 @@ button:focus-visible{outline:3px solid #2d7ff9;outline-offset:2px}
     <button class="go" id="go">歩きはじめる</button>
     <button class="sub" id="clear">消す</button>
   </div>
-  <div class="msg" id="msg">位置情報をオンにして「歩きはじめる」を押してね</div>
+  <div class="msg" id="msg">位置情報を許可して「歩きはじめる」を押してね</div>
 </div>
 
 <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
@@ -138,8 +138,11 @@ const save=()=>{clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setIt
 /* ---------- 地図 ---------- */
 const start = store.prints.length ? [store.prints.at(-1)[0],store.prints.at(-1)[1]] : [35.6812,139.7671];
 const map=L.map('map',{zoomControl:false,zoomAnimation:false,attributionControl:true}).setView(start,17);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc',
-  attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+// 文字なし地図（道・川・緑地）＋ 地形の陰影
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png',{maxZoom:20,subdomains:'abcd',
+  attribution:'&copy; OpenStreetMap contributors &copy; CARTO'}).addTo(map);
+L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png',{maxNativeZoom:16,maxZoom:20,opacity:.22,
+  attribution:'地理院タイル'}).addTo(map);
 
 const PrintLayer=L.Layer.extend({
   onAdd(m){this.c=L.DomUtil.create('canvas','');this.c.style.pointerEvents='none';
@@ -174,10 +177,17 @@ const hav=(a,b)=>{const dl=rad(b[0]-a[0]),dn=rad(b[1]-a[1]);const h=Math.sin(dl/
 const bearing=(a,b)=>{const y=Math.sin(rad(b[1]-a[1]))*Math.cos(rad(b[0])),x=Math.cos(rad(a[0]))*Math.sin(rad(b[0]))-Math.sin(rad(a[0]))*Math.cos(rad(b[0]))*Math.cos(rad(b[1]-a[1]));return(Math.atan2(y,x)*180/Math.PI+360)%360};
 let last=null,lastT=0,carry=0,side=1;
 
+let rec=false,here=null,firstFix=true;
+function showHere(lat,lng,accuracy){
+  const p=[lat,lng];here=p;
+  me.setLatLng(p).addTo(map);acc.setLatLng(p).setRadius(accuracy||5).addTo(map);
+  if(firstFix){firstFix=false;map.setView(p,17,{animate:false})}
+  else if(follow)map.panTo(p,{animate:false});
+}
 function addPoint(lat,lng,accuracy,t){
+  showHere(lat,lng,accuracy);
+  if(!rec)return;
   const p=[lat,lng];
-  me.setLatLng(p);acc.setLatLng(p).setRadius(accuracy||5);
-  if(follow)map.panTo(p,{animate:false});
   if(accuracy>35){msg(`GPSの精度待ち…（±${Math.round(accuracy)}m）`);return}
   if(!last){last=p;lastT=t;msg('記録中：歩くと足跡がつくよ');return}
   const d=hav(last,p),dt=(t-lastT)/1000;
@@ -198,28 +208,34 @@ function addPoint(lat,lng,accuracy,t){
 /* ---------- GPS / デモ ---------- */
 let watch=null,demoT=null,follow=true,lock=null;
 async function wake(){try{if('wakeLock' in navigator)lock=await navigator.wakeLock.request('screen')}catch(e){}}
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&(watch!==null||demoT))wake()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&rec)wake()});
 
-function begin(){
-  if(!('geolocation' in navigator)){msg('この端末は位置情報が使えません。「デモ」で試せます');return}
-  if(!isSecureContext){msg('位置情報は https のページでしか使えません');return}
-  last=null;carry=0;
-  me.addTo(map);acc.addTo(map);
+// 開いた時点から現在地を表示（記録はしない）
+function locate(){
+  if(watch!==null)return true;
+  if(!('geolocation' in navigator)){msg('この端末は位置情報が使えません。「デモ」で試せます');return false}
+  if(!isSecureContext){msg('位置情報は https のページでしか使えません');return false}
   watch=navigator.geolocation.watchPosition(
-    g=>addPoint(g.coords.latitude,g.coords.longitude,g.coords.accuracy,g.timestamp),
-    e=>{msg(e.code===1?'位置情報が許可されていません。設定から許可してね':'位置が取れません…（屋内かも）');if(e.code===1)end()},
+    g=>{if(!demoT)addPoint(g.coords.latitude,g.coords.longitude,g.coords.accuracy,g.timestamp)},
+    e=>{if(e.code===1){msg('位置情報が許可されていません。設定から許可してね');navigator.geolocation.clearWatch(watch);watch=null;if(rec&&!demoT)end()}
+        else if(rec)msg('位置が取れません…（屋内かも）')},
     {enableHighAccuracy:true,maximumAge:2000,timeout:20000});
-  wake();setGo(true);msg('現在地をさがしています…');
+  return true;
+}
+function begin(){
+  if(!locate())return;
+  last=null;carry=0;rec=true;
+  wake();setGo(true);msg(here?'記録中：歩くと足跡がつくよ':'現在地をさがしています…');
 }
 function end(){
-  if(watch!==null)navigator.geolocation.clearWatch(watch);watch=null;
+  rec=false;
   clearInterval(demoT);demoT=null;$('demo').classList.remove('on');
   try{lock&&lock.release()}catch(e){}lock=null;
   setGo(false);msg('おつかれさま！足跡は保存されています');
 }
 function demo(){
-  if(watch!==null||demoT){end();return}
-  last=null;carry=0;me.addTo(map);acc.addTo(map);
+  if(rec){end();return}
+  last=null;carry=0;rec=true;
   let c=map.getCenter(),p=[c.lat,c.lng],h=Math.random()*360,t=Date.now();
   $('demo').classList.add('on');setGo(true);
   demoT=setInterval(()=>{
@@ -248,9 +264,9 @@ $('animals').innerHTML=ANIMALS.map((a,i)=>`<button class="an" data-i="${i}" aria
 document.querySelectorAll('.an').forEach((b,i)=>{thumb(b.querySelector('canvas'),ANIMALS[i]);b.onclick=()=>pick(i)});
 pick(Math.min(store.animal||0,ANIMALS.length-1));
 
-$('go').onclick=()=>(watch!==null||demoT)?end():begin();
+$('go').onclick=()=>rec?end():begin();
 $('demo').onclick=demo;
-$('follow').onclick=()=>{follow=!follow;$('follow').classList.toggle('on',follow);if(follow&&last)map.panTo(last)};
+$('follow').onclick=()=>{follow=!follow;$('follow').classList.toggle('on',follow);if(follow&&here)map.setView(here,Math.max(map.getZoom(),17))};
 map.on('dragstart',()=>{follow=false;$('follow').classList.remove('on')});
 $('fit').onclick=()=>{if(!store.prints.length){msg('まだ足跡がありません');return}
   map.fitBounds(L.latLngBounds(store.prints.map(p=>[p[0],p[1]])),{padding:[40,40],maxZoom:18});follow=false;$('follow').classList.remove('on')};
@@ -259,6 +275,7 @@ $('no').onclick=()=>$('modal').classList.remove('show');
 $('yes').onclick=()=>{store.prints=[];store.dist=0;last=null;carry=0;save();stats();prints.draw();$('modal').classList.remove('show');msg('足跡を消しました')};
 
 stats();
+locate();
 if('serviceWorker' in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
 </script>
