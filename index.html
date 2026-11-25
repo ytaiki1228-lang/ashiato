@@ -74,10 +74,10 @@ button:focus-visible{outline:3px solid #2d7ff9;outline-offset:2px}
   <div class="label">どの動物で歩く？</div>
   <div class="animals" id="animals"></div>
   <div class="row">
-    <button class="go" id="go">歩きはじめる</button>
+    <button class="go rec" id="go">記録中（タップで一時停止）</button>
     <button class="sub" id="clear">消す</button>
   </div>
-  <div class="msg" id="msg">位置情報を許可して「歩きはじめる」を押してね</div>
+  <div class="msg" id="msg">位置情報を許可すると、歩いた道に足跡がつきます</div>
 </div>
 
 <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
@@ -135,6 +135,10 @@ function drawPrint(ctx,a,x,y,size,rot){
 const KEY='ashiato-v1';
 let store={prints:[],dist:0,animal:0};
 try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.prints))store=Object.assign(store,s)}catch(e){}
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+// 同じ場所（約4m四方）には足跡を1つだけ：同じ道を何度歩いても重ならない
+const CELL=4,cellKey=(la,ln)=>Math.floor(la*111320/CELL)+','+Math.floor(ln*111320*Math.cos(la*Math.PI/180)/CELL);
+const used=new Set(store.prints.map(p=>cellKey(p[0],p[1])));
 let saveT=0;
 const save=()=>{clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){msg('保存できませんでした（容量不足かも）')}},800)};
 
@@ -161,16 +165,27 @@ const PrintLayer=L.Layer.extend({
     c.width=sz.x*dpr;c.height=sz.y*dpr;c.style.width=sz.x+'px';c.style.height=sz.y+'px';
     const ctx=c.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);
     const lat=m.getCenter().lat,mpp=40075016.686*Math.cos(lat*Math.PI/180)/2**(m.getZoom()+8);
-    let lx=-1e9,ly=-1e9;
-    for(const p of store.prints){
-      const a=ANIMALS[p[3]]||ANIMALS[0];
+    const z=m.getZoom(),taken=new Set();
+    if(z<16){                                   // 引いたとき：歩いた場所を塗りつぶし
+      const r=Math.max(2.5,5/mpp),g=r*1.2;
+      ctx.globalAlpha=.6;
+      for(const p of store.prints){
+        const pt=m.latLngToContainerPoint([p[0],p[1]]);
+        if(pt.x<-10||pt.y<-10||pt.x>sz.x+10||pt.y>sz.y+10)continue;
+        const k=Math.round(pt.x/g)+','+Math.round(pt.y/g);if(taken.has(k))continue;taken.add(k);
+        ctx.fillStyle=(ANIMALS[p[3]]||ANIMALS[0]).color;ctx.beginPath();ctx.arc(pt.x,pt.y,r,0,7);ctx.fill();
+      }
+      ctx.globalAlpha=1;return;
+    }
+    for(let i=store.prints.length-1;i>=0;i--){   // 寄ったとき：足跡（新しいものを優先、重なりは間引く）
+      const p=store.prints[i],a=ANIMALS[p[3]]||ANIMALS[0];
       const size=Math.max(20,a.stride*.9/mpp);
       const pt=m.latLngToContainerPoint([p[0],p[1]]);
       if(pt.x<-40||pt.y<-40||pt.x>sz.x+40||pt.y>sz.y+40)continue;
       const r=p[2]*Math.PI/180,off=p[4]*size*.42;
-      const x=pt.x+Math.cos(r)*off,y=pt.y+Math.sin(r)*off;
-      if(Math.hypot(x-lx,y-ly)<size*1.05)continue;
-      lx=x;ly=y;drawPrint(ctx,a,x,y,size,r);
+      const x=pt.x+Math.cos(r)*off,y=pt.y+Math.sin(r)*off,g=size*.95;
+      const k=Math.round(x/g)+','+Math.round(y/g);if(taken.has(k))continue;taken.add(k);
+      drawPrint(ctx,a,x,y,size,r);
     }
   }
 });
@@ -204,7 +219,8 @@ function addPoint(lat,lng,accuracy,t){
   let s=a.stride-carry;
   while(s<=d){
     const f=s/d;
-    store.prints.push([+(last[0]+(p[0]-last[0])*f).toFixed(6),+(last[1]+(p[1]-last[1])*f).toFixed(6),Math.round(h),store.animal,side]);
+    const la=+(last[0]+(p[0]-last[0])*f).toFixed(6),ln=+(last[1]+(p[1]-last[1])*f).toFixed(6),k=cellKey(la,ln);
+    if(!used.has(k)){used.add(k);store.prints.push([la,ln,Math.round(h),store.animal,side])}
     side=-side;s+=a.stride;
   }
   carry=a.stride-(s-d);
@@ -238,10 +254,10 @@ function end(){
   rec=false;
   clearInterval(demoT);demoT=null;$('demo').classList.remove('on');
   try{lock&&lock.release()}catch(e){}lock=null;
-  setGo(false);msg('おつかれさま！足跡は保存されています');
+  setGo(false);msg('一時停止中。足跡は保存されています');
 }
 function demo(){
-  if(rec){end();return}
+  if(demoT){clearInterval(demoT);demoT=null;$('demo').classList.remove('on');last=null;msg('デモを止めました');return}
   last=null;carry=0;rec=true;
   let c=map.getCenter(),p=[c.lat,c.lng],h=Math.random()*360,t=Date.now();
   $('demo').classList.add('on');setGo(true);
@@ -258,7 +274,7 @@ function demo(){
 const $=id=>document.getElementById(id);
 const msg=t=>$('msg').textContent=t;
 const stats=()=>{$('dist').textContent=(store.dist/1000).toFixed(2);$('count').textContent=store.prints.length.toLocaleString()};
-const setGo=on=>{const b=$('go');b.classList.toggle('rec',on);b.textContent=on?'記録中（タップで終了）':'歩きはじめる'};
+const setGo=on=>{const b=$('go');b.classList.toggle('rec',on);b.textContent=on?'記録中（タップで一時停止）':'記録を再開する'};
 
 function thumb(cv,a){const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);drawPrint(ctx,a,cv.width/2,cv.height/2,cv.width*.78,0)}
 function pick(i){
@@ -279,10 +295,10 @@ $('fit').onclick=()=>{if(!store.prints.length){msg('まだ足跡がありませ�
   map.fitBounds(L.latLngBounds(store.prints.map(p=>[p[0],p[1]])),{padding:[40,40],maxZoom:18});follow=false;$('follow').classList.remove('on')};
 $('clear').onclick=()=>$('modal').classList.add('show');
 $('no').onclick=()=>$('modal').classList.remove('show');
-$('yes').onclick=()=>{store.prints=[];store.dist=0;last=null;carry=0;save();stats();prints.draw();$('modal').classList.remove('show');msg('足跡を消しました')};
+$('yes').onclick=()=>{store.prints=[];used.clear();store.dist=0;last=null;carry=0;save();stats();prints.draw();$('modal').classList.remove('show');msg('足跡を消しました')};
 
 stats();
-locate();
+begin();
 if('serviceWorker' in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
 </script>
