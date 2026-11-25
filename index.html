@@ -24,6 +24,15 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1
 .brand canvas{width:22px;height:22px}
 .stats{margin-left:auto;display:flex;gap:14px;font-size:13px;white-space:nowrap}
 .stats b{font-size:17px;font-variant-numeric:tabular-nums}
+.town{position:fixed;z-index:500;top:calc(env(safe-area-inset-top) + 64px);left:10px;max-width:calc(100% - 20px);background:var(--card);border:1px solid var(--line);border-radius:14px;padding:6px 12px;font-size:13px;box-shadow:0 4px 14px rgba(60,40,20,.12);display:none;align-items:center;gap:8px}
+.town.show{display:flex}
+.town .nm{font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.town .bar{width:64px;height:8px;border-radius:4px;background:var(--line);overflow:hidden;flex:none}
+.town .bar i{display:block;height:100%;background:var(--acc);width:0}
+.town b{font-variant-numeric:tabular-nums;white-space:nowrap}
+.toast{position:fixed;z-index:950;left:50%;top:40%;transform:translate(-50%,-50%);background:var(--card);border:2px solid var(--acc);border-radius:20px;padding:18px 22px;text-align:center;font-weight:900;font-size:18px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:none;max-width:86vw}
+.toast.show{display:block}
+.toast small{display:block;font-weight:500;font-size:13px;margin-top:4px}
 .side{position:fixed;z-index:500;right:10px;bottom:calc(env(safe-area-inset-bottom) + 214px);display:flex;flex-direction:column;gap:8px}
 .side button{width:46px;height:46px;border-radius:14px;border:1px solid var(--line);background:var(--card);font:inherit;font-size:11px;font-weight:700;color:var(--ink);box-shadow:0 4px 14px rgba(60,40,20,.12)}
 .side button.on{background:var(--ink);color:#fff}
@@ -61,8 +70,11 @@ button:focus-visible{outline:3px solid #2d7ff9;outline-offset:2px}
   <div class="stats">
     <span><b id="dist">0.00</b> km</span>
     <span><b id="count">0</b> 歩</span>
+    <span><b id="flags">0</b> 旗</span>
   </div>
 </div>
+<div class="town" id="town"><span class="nm" id="tname"></span><span class="bar"><i id="tbar"></i></span><b id="tpct"></b></div>
+<div class="toast" id="toast"></div>
 
 <div class="side">
   <button id="follow" class="on" aria-label="現在地を追う">追従</button>
@@ -83,7 +95,7 @@ button:focus-visible{outline:3px solid #2d7ff9;outline-offset:2px}
 <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
   <div class="box">
     <h2 id="mt">足跡をぜんぶ消す？</h2>
-    <p>これまで歩いた足跡がすべて消えます。元に戻せません。</p>
+    <p>これまで歩いた足跡と立てた旗がすべて消えます。元に戻せません。</p>
     <div class="row"><button id="no">やめる</button><button id="yes" class="danger">消す</button></div>
   </div>
 </div>
@@ -133,7 +145,7 @@ function drawPrint(ctx,a,x,y,size,rot){
 
 /* ---------- 保存 ---------- */
 const KEY='ashiato-v1';
-let store={prints:[],dist:0,animal:0};
+let store={prints:[],dist:0,animal:0,towns:{}};
 try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.prints))store=Object.assign(store,s)}catch(e){}
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 // 同じ場所（約4m四方）には足跡を1つだけ：同じ道を何度歩いても重ならない
@@ -175,7 +187,7 @@ const PrintLayer=L.Layer.extend({
         const k=Math.round(pt.x/g)+','+Math.round(pt.y/g);if(taken.has(k))continue;taken.add(k);
         ctx.fillStyle=(ANIMALS[p[3]]||ANIMALS[0]).color;ctx.beginPath();ctx.arc(pt.x,pt.y,r,0,7);ctx.fill();
       }
-      ctx.globalAlpha=1;return;
+      ctx.globalAlpha=1;drawFlags(ctx,m,sz);return;
     }
     for(let i=store.prints.length-1;i>=0;i--){   // 寄ったとき：足跡（新しいものを優先、重なりは間引く）
       const p=store.prints[i],a=ANIMALS[p[3]]||ANIMALS[0];
@@ -187,9 +199,132 @@ const PrintLayer=L.Layer.extend({
       const k=Math.round(x/g)+','+Math.round(y/g);if(taken.has(k))continue;taken.add(k);
       drawPrint(ctx,a,x,y,size,r);
     }
+    drawFlags(ctx,m,sz);
   }
 });
 const prints=new PrintLayer().addTo(map);
+
+/* ---------- 旗 ---------- */
+function drawFlags(ctx,m,sz){
+  for(const id in store.towns){
+    const t=store.towns[id];if(t.flag==null||!t.c)continue;
+    const pt=m.latLngToContainerPoint(t.c);
+    if(pt.x<-60||pt.y<-60||pt.x>sz.x+60||pt.y>sz.y+60)continue;
+    const a=ANIMALS[t.flag]||ANIMALS[0],x=pt.x,y=pt.y;
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,.22)';ctx.beginPath();ctx.ellipse(x,y,9,3.5,0,0,7);ctx.fill();
+    ctx.strokeStyle='#4a3a2c';ctx.lineWidth=3;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y-46);ctx.stroke();
+    ctx.fillStyle='#f2c14e';ctx.beginPath();ctx.arc(x,y-47,3.5,0,7);ctx.fill();
+    ctx.beginPath();ctx.moveTo(x+1,y-44);ctx.quadraticCurveTo(x+20,y-50,x+38,y-40);ctx.quadraticCurveTo(x+24,y-32,x+38,y-22);ctx.quadraticCurveTo(x+20,y-30,x+1,y-24);ctx.closePath();
+    ctx.fillStyle=a.color;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.restore();
+    drawPrint(ctx,{...a,color:'#fff'},x+17,y-34,14,0);
+  }
+}
+
+/* ---------- 町（丁目）の道の占有率 ---------- */
+const OVERPASS=['https://overpass-api.de/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+const ROADS='^(primary|secondary|tertiary|unclassified|residential|living_street|pedestrian)(_link)?$';
+const NEAR=10;                       // 道からこの距離(m)以内に足跡があれば「踏んだ」
+async function overpass(q){             // 複数サーバーに同時に聞いて、一番早い正しい返事を使う
+  const ctl=new AbortController();
+  const one=u=>fetch(u,{method:'POST',body:'data='+encodeURIComponent(q),signal:ctl.signal}).then(async r=>{
+    if(!r.ok)throw new Error(r.status);const j=await r.json();if(!j||!Array.isArray(j.elements))throw new Error('bad');return j});
+  try{const j=await Promise.any(OVERPASS.map(one));ctl.abort();return j}catch(e){throw e}
+}
+const geoKey=id=>'ashiato-geo-'+id;
+const geoMem={};
+function loadGeo(id){if(geoMem[id])return geoMem[id];try{const g=JSON.parse(localStorage.getItem(geoKey(id)));if(g)return geoMem[id]=g}catch(e){}return null}
+function inRings(rings,la,ln){let ins=false;for(const r of rings)for(let i=0,j=r.length-1;i<r.length;j=i++){const [ya,xa]=r[i],[yb,xb]=r[j];if((ya>la)!==(yb>la)&&ln<(xb-xa)*(la-ya)/(yb-ya)+xa)ins=!ins}return ins}
+function buildRings(rel){
+  const segs=rel.members.filter(m=>m.type==='way'&&m.role!=='inner'&&m.geometry).map(m=>m.geometry.map(g=>[g.lat,g.lon]));
+  const inner=rel.members.filter(m=>m.type==='way'&&m.role==='inner'&&m.geometry).map(m=>m.geometry.map(g=>[g.lat,g.lon]));
+  const same=(a,b)=>Math.abs(a[0]-b[0])<1e-7&&Math.abs(a[1]-b[1])<1e-7;
+  const join=list=>{const out=[];list=list.slice();while(list.length){let r=list.shift().slice(),grew=true;
+    while(!same(r[0],r.at(-1))&&grew){grew=false;for(let i=0;i<list.length;i++){const w=list[i];
+      if(same(r.at(-1),w[0])){r=r.concat(w.slice(1))}else if(same(r.at(-1),w.at(-1))){r=r.concat(w.slice(0,-1).reverse())}else continue;
+      list.splice(i,1);grew=true;break}}
+    out.push(r.map(p=>[+p[0].toFixed(6),+p[1].toFixed(6)]))}return out};
+  return join(segs).concat(join(inner));
+}
+function centroid(rings,samples){
+  let A=0,cx=0,cy=0;const r=rings.reduce((a,b)=>a.length>b.length?a:b,[]);
+  for(let i=0,j=r.length-1;i<r.length;j=i++){const f=r[j][1]*r[i][0]-r[i][1]*r[j][0];A+=f;cx+=(r[j][1]+r[i][1])*f;cy+=(r[j][0]+r[i][0])*f}
+  let c=A?[cy/(3*A),cx/(3*A)]:null;
+  if(!c||!inRings(rings,c[0],c[1])){                 // 中心が町の外なら、一番近い道の点に
+    const t=c||samples[0];let best=samples[0],bd=1e18;
+    for(const s of samples){const d=(s[0]-t[0])**2+(s[1]-t[1])**2;if(d<bd){bd=d;best=s}}c=best}
+  return c;
+}
+async function fetchTown(lat,lng){
+  const a=await overpass(`[out:json][timeout:25];is_in(${lat},${lng})->.a;rel(pivot.a)["boundary"="administrative"]["admin_level"~"^(9|10)$"];out tags;`);
+  const rels=(a.elements||[]).sort((x,y)=>(+y.tags.admin_level)-(+x.tags.admin_level));
+  if(!rels.length)return null;
+  const rel=rels[0],id=rel.id;
+  if(loadGeo(id))return id;
+  const rg=await overpass(`[out:json][timeout:60];rel(${id});out geom;`);
+  const R1=rg.elements.find(e=>e.type==='relation');if(!R1||!R1.bounds)return null;
+  const b=R1.bounds,g=await overpass(`[out:json][timeout:60];way["highway"~"${ROADS}"]["access"!~"^(private|no)$"]["area"!="yes"](${b.minlat},${b.minlon},${b.maxlat},${b.maxlon});out geom;`);
+  g.elements.push(R1);
+  const R0=g.elements.find(e=>e.type==='relation');if(!R0)return null;
+  const rings=buildRings(R0);
+  const samples=[],seen=new Set();
+  for(const w of g.elements.filter(e=>e.type==='way'&&e.geometry)){
+    for(let i=1;i<w.geometry.length;i++){
+      const A=[w.geometry[i-1].lat,w.geometry[i-1].lon],B=[w.geometry[i].lat,w.geometry[i].lon],d=hav(A,B),n=Math.max(1,Math.ceil(d/5));
+      for(let k=0;k<=n;k++){const la=A[0]+(B[0]-A[0])*k/n,ln=A[1]+(B[1]-A[1])*k/n;
+        if(!inRings(rings,la,ln))continue;const key=cellKey(la,ln);if(seen.has(key))continue;seen.add(key);
+        samples.push([+la.toFixed(6),+ln.toFixed(6)])}
+    }
+  }
+  if(!samples.length)return null;
+  const geo={id,name:(rel.tags.name||'名前のない町'),rings,samples,c:centroid(rings,samples)};
+  geoMem[id]=geo;try{localStorage.setItem(geoKey(id),JSON.stringify(geo))}catch(e){}
+  if(!store.towns[id])store.towns[id]={name:geo.name,c:geo.c,pct:0,flag:null};
+  save();return id;
+}
+// 足跡の近傍検索用（約10mのマス）
+const NC=NEAR,nKey=(la,ln)=>[Math.floor(la*111320/NC),Math.floor(ln*111320*Math.cos(la*Math.PI/180)/NC)];
+const near=new Map();
+const addNear=(p,i)=>{const [a,b]=nKey(p[0],p[1]),k=a+','+b;(near.get(k)||near.set(k,[]).get(k)).push(i)};
+store.prints.forEach(addNear);
+function coverage(geo){
+  let hit=0;const votes=new Array(ANIMALS.length).fill(0);
+  for(const s of geo.samples){
+    const [a,b]=nKey(s[0],s[1]);let found=-1;
+    for(let da=-1;da<=1&&found<0;da++)for(let db=-1;db<=1&&found<0;db++){
+      const l=near.get((a+da)+','+(b+db));if(!l)continue;
+      for(const i of l){const p=store.prints[i];if(hav(s,p)<=NEAR){found=i;break}}
+    }
+    if(found>=0){hit++;votes[store.prints[found][3]]++}
+  }
+  return {pct:hit/geo.samples.length*100,animal:votes.indexOf(Math.max(...votes))};
+}
+let curTown=null,lastLookup=0,lastCov=0,looking=false;
+function showTown(){
+  const t=curTown&&store.towns[curTown];
+  if(!t){$('town').classList.remove('show');return}
+  $('town').classList.add('show');$('tname').textContent=t.name+(t.flag!=null?'（制覇）':'');
+  $('tpct').textContent='道の'+Math.floor(t.pct)+'%';$('tbar').style.width=Math.min(100,t.pct)+'%';
+}
+function toast(html){const el=$('toast');el.innerHTML=html;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),4000)}
+const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function updateCoverage(force){
+  if(!curTown)return;const now=Date.now();if(!force&&now-lastCov<8000)return;lastCov=now;
+  const geo=loadGeo(curTown),t=store.towns[curTown];if(!geo||!t)return;
+  const r=coverage(geo);t.pct=Math.max(t.pct,r.pct);
+  if(t.flag==null&&r.pct>=90){t.flag=r.animal;prints.draw();
+    toast(`${esc(t.name)} を制覇！<small>${esc(ANIMALS[r.animal].name)}の旗が立ちました</small>`)}
+  save();showTown();stats();
+}
+async function townTick(p){
+  if(curTown){const g=loadGeo(curTown);if(g&&inRings(g.rings,p[0],p[1])){updateCoverage();return}}
+  for(const id in store.towns){const g=loadGeo(id);if(g&&inRings(g.rings,p[0],p[1])){curTown=id;updateCoverage(true);return}}
+  const now=Date.now();if(looking||now-lastLookup<30000)return;lastLookup=now;looking=true;
+  try{const id=await fetchTown(p[0],p[1]);curTown=id;if(id)updateCoverage(true);else showTown()}
+  catch(e){}finally{looking=false}
+}
+
 const me=L.marker(start,{icon:L.divIcon({className:'',html:'<div class="me"></div>',iconSize:[18,18]}),interactive:false});
 const acc=L.circle(start,{radius:10,color:'#2d7ff9',weight:1,fillOpacity:.08,interactive:false});
 
@@ -208,6 +343,7 @@ function showHere(lat,lng,accuracy){
 }
 function addPoint(lat,lng,accuracy,t){
   showHere(lat,lng,accuracy);
+  if(accuracy<=50)townTick([lat,lng]);
   if(!rec)return;
   const p=[lat,lng];
   if(accuracy>35){msg(`GPSの精度待ち…（±${Math.round(accuracy)}m）`);return}
@@ -220,7 +356,7 @@ function addPoint(lat,lng,accuracy,t){
   while(s<=d){
     const f=s/d;
     const la=+(last[0]+(p[0]-last[0])*f).toFixed(6),ln=+(last[1]+(p[1]-last[1])*f).toFixed(6),k=cellKey(la,ln);
-    if(!used.has(k)){used.add(k);store.prints.push([la,ln,Math.round(h),store.animal,side])}
+    if(!used.has(k)){used.add(k);store.prints.push([la,ln,Math.round(h),store.animal,side]);addNear(store.prints.at(-1),store.prints.length-1)}
     side=-side;s+=a.stride;
   }
   carry=a.stride-(s-d);
@@ -273,7 +409,7 @@ function demo(){
 /* ---------- UI ---------- */
 const $=id=>document.getElementById(id);
 const msg=t=>$('msg').textContent=t;
-const stats=()=>{$('dist').textContent=(store.dist/1000).toFixed(2);$('count').textContent=store.prints.length.toLocaleString()};
+const stats=()=>{$('dist').textContent=(store.dist/1000).toFixed(2);$('count').textContent=store.prints.length.toLocaleString();$('flags').textContent=Object.values(store.towns).filter(t=>t.flag!=null).length};
 const setGo=on=>{const b=$('go');b.classList.toggle('rec',on);b.textContent=on?'記録中（タップで停止）':'記録を再開する'};
 
 function thumb(cv,a){const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);drawPrint(ctx,a,cv.width/2,cv.height/2,cv.width*.78,0)}
@@ -295,9 +431,12 @@ $('fit').onclick=()=>{if(!store.prints.length){msg('まだ足跡がありませ�
   map.fitBounds(L.latLngBounds(store.prints.map(p=>[p[0],p[1]])),{padding:[40,40],maxZoom:18});follow=false;$('follow').classList.remove('on')};
 $('clear').onclick=()=>$('modal').classList.add('show');
 $('no').onclick=()=>$('modal').classList.remove('show');
-$('yes').onclick=()=>{store.prints=[];used.clear();store.dist=0;last=null;carry=0;save();stats();prints.draw();$('modal').classList.remove('show');msg('足跡を消しました')};
+$('yes').onclick=()=>{store.prints=[];used.clear();near.clear();for(const id in store.towns){store.towns[id].pct=0;store.towns[id].flag=null}showTown();store.dist=0;last=null;carry=0;save();stats();prints.draw();$('modal').classList.remove('show');msg('足跡を消しました')};
 
 stats();
+if(location.hash==='#debug')window.__dbg={store,townTick,loadGeo,coverage,updateCoverage,get cur(){return curTown},
+  fill(id,frac=1){const g=loadGeo(id);for(const p of g.samples.slice(0,Math.floor(g.samples.length*frac))){store.prints.push([p[0],p[1],0,store.animal,1]);addNear(store.prints.at(-1),store.prints.length-1)}prints.draw()},
+  go(lat,lng){map.setView([lat,lng],16)}};
 begin();
 if('serviceWorker' in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
