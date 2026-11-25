@@ -406,9 +406,9 @@ function demo(){
   last=null;carry=0;rec=true;
   let c=map.getCenter(),p=[c.lat,c.lng],h=Math.random()*360,t=Date.now();
   $('demo').classList.add('on');setGo(true);
-  let tgt=null;const done=new Set();
+  let tgt=null,dg=null;const done=new Set();
   demoT=setInterval(()=>{
-    t+=1000;const step=6,geo=curTown&&loadGeo(curTown);
+    t+=1000;const step=6;if(!dg&&curTown)dg=loadGeo(curTown);const geo=dg;   // 最初に入った町を回り切るまで留まる
     if(geo){                                  // 町のデータがあれば、まだ踏んでいない道へ向かって歩く
       if(!tgt||hav(p,tgt)<3){
         if(tgt)geo.samples.forEach((s,i)=>{if(hav(s,tgt)<9)done.add(i)});
